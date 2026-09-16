@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+cargo run \
+  --quiet \
+  --manifest-path tools/commit_check/Cargo.toml \
+  -- \
+  --edit "$1"

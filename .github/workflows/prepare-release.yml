@@ -1,0 +1,186 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact Cargo version, such as 0.1.0-rc.1
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare Release Pull Request
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Validate and set version
+        id: version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: python3 scripts/prepare_release.py --version "$VERSION"
+
+      - name: Check for an existing pull request
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          branch="release/v$VERSION"
+          url="$(gh pr list --base main --head "$branch" --state open --json url --jq '.[0].url')"
+          if [ -n "$url" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "url=$url" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reject a stale release branch
+        if: steps.existing.outputs.found == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          branch="release/v$VERSION"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "release branch $branch exists without an open pull request" >&2
+            exit 1
+          fi
+
+      - name: Create release commit
+        if: steps.existing.outputs.found == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          branch="release/v$VERSION"
+          request="$RUNNER_TEMP/release-commit.json"
+          contents="$(base64 < Cargo.toml | tr -d '\n')"
+          created=false
+
+          cleanup() {
+            if [ "$created" = "true" ]; then
+              gh api --method DELETE \
+                "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch"
+            fi
+          }
+          trap cleanup ERR
+
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/git/refs" \
+            --field ref="refs/heads/$branch" \
+            --field sha="$GITHUB_SHA"
+          created=true
+
+          jq --null-input \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg branch "$branch" \
+            --arg expected_head "$GITHUB_SHA" \
+            --arg headline "chore(release): prepare $VERSION" \
+            --arg contents "$contents" \
+            '{
+              query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+              variables: {
+                input: {
+                  branch: {
+                    repositoryNameWithOwner: $repository,
+                    branchName: $branch
+                  },
+                  expectedHeadOid: $expected_head,
+                  message: { headline: $headline },
+                  fileChanges: {
+                    additions: [
+                      { path: "Cargo.toml", contents: $contents }
+                    ]
+                  }
+                }
+              }
+            }' > "$request"
+
+          gh api graphql --input "$request" \
+            --jq '.data.createCommitOnBranch.commit.oid'
+          trap - ERR
+
+      - name: Open release pull request
+        id: opened
+        if: steps.existing.outputs.found == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          NAME: ${{ steps.version.outputs.name }}
+        run: |
+          branch="release/v$VERSION"
+          body="$RUNNER_TEMP/release-pr.md"
+          gh label create release \
+            --color 0e8a16 \
+            --description "prepares a crates.io release" \
+            --force
+          cat > "$body" <<EOF
+          This pull request prepares \`$NAME\` \`$VERSION\`.
+
+          Merging publishes this exact version to crates.io and creates the
+          matching GitHub release after all required checks pass.
+
+          ## Changes
+
+          - sets the package version to \`$VERSION\`
+          - previews generated release notes in pull request CI
+
+          ## Affected modules
+
+          - package metadata
+          - release automation
+
+          ## Manual steps
+
+          None.
+          EOF
+          url="$(gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "chore(release): prepare $VERSION" \
+            --body-file "$body" \
+            --label release)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Report existing pull request
+        if: steps.existing.outputs.found == 'true'
+        env:
+          URL: ${{ steps.existing.outputs.url }}
+        run: echo "release pull request already exists at $URL"
+
+      - name: Run pull request CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ steps.opened.outputs.url || steps.existing.outputs.url }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          branch="release/v$VERSION"
+          number="$(gh pr view "$URL" --json number --jq .number)"
+          base_sha="$(gh pr view "$URL" --json baseRefOid --jq .baseRefOid)"
+          head_sha="$(gh pr view "$URL" --json headRefOid --jq .headRefOid)"
+          title="chore(release): prepare $VERSION"
+          gh workflow run ci.yml \
+            --ref "$branch" \
+            --field pr_number="$number" \
+            --field base_sha="$base_sha" \
+            --field head_sha="$head_sha" \
+            --field pr_title="$title"

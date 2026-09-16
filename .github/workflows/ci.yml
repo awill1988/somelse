@@ -1,0 +1,426 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Generated release pull request number
+        required: false
+        type: string
+      base_sha:
+        description: Generated release pull request base commit
+        required: false
+        type: string
+      head_sha:
+        description: Generated release pull request head commit
+        required: false
+        type: string
+      pr_title:
+        description: Generated release pull request title
+        required: false
+        type: string
+      release_sha:
+        description: Merged main commit to recover
+        required: false
+        type: string
+
+jobs:
+  commit_lint:
+    name: Conventional Commit Lint
+    if: github.event_name != 'workflow_dispatch' || inputs.pr_number != '' || inputs.release_sha != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Lint pull request commits and title
+        if: github.event_name == 'pull_request' || inputs.pr_number != ''
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}
+          PR_TITLE: ${{ github.event.pull_request.title || inputs.pr_title }}
+        run: |
+          cargo run --quiet --manifest-path tools/commit_check/Cargo.toml -- \
+            --range "$BASE_SHA" "$HEAD_SHA"
+          printf '%s\n' "$PR_TITLE" | \
+            cargo run --quiet --manifest-path tools/commit_check/Cargo.toml
+
+      - name: Lint new main commits
+        if: github.event_name == 'push'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          cargo run --quiet --manifest-path tools/commit_check/Cargo.toml -- \
+            --github-range "$BEFORE_SHA" "$GITHUB_SHA"
+
+      - name: Lint recovery commit
+        if: github.event_name == 'workflow_dispatch' && inputs.release_sha != ''
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release_sha must be a full commit sha" >&2
+            exit 1
+          fi
+          before_sha="$(git rev-parse "$RELEASE_SHA^")"
+          cargo run --quiet --manifest-path tools/commit_check/Cargo.toml -- \
+            --github-range "$before_sha" "$RELEASE_SHA"
+
+  test:
+    name: Test & Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha || github.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Run default tests
+        run: cargo test
+
+      - name: Test commit message linter
+        run: cargo test --manifest-path tools/commit_check/Cargo.toml
+
+      - name: Check formatting
+        run: |
+          cargo fmt --all -- --check
+          cargo fmt --manifest-path tests/fixtures/downstream/Cargo.toml -- --check
+          cargo fmt --manifest-path tools/commit_check/Cargo.toml -- --check
+
+      - name: Check no_std downstream
+        run: cargo check --manifest-path tests/fixtures/downstream/Cargo.toml --no-default-features
+
+      - name: Test downstream consumer
+        run: cargo test --manifest-path tests/fixtures/downstream/Cargo.toml
+
+      - name: Run clippy
+        run: |
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo clippy --manifest-path tests/fixtures/downstream/Cargo.toml --all-targets -- -D warnings
+          cargo clippy --manifest-path tools/commit_check/Cargo.toml --all-targets -- -D warnings
+
+      - name: Cargo Publish Dry Run
+        run: cargo publish --dry-run
+
+      - name: Test release gate
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: 1.24.x
+
+      - name: Lint GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate code coverage
+        run: |
+          cargo llvm-cov --all-features --workspace --html --output-dir target/llvm-cov/html
+          cargo llvm-cov report --text > coverage.txt
+          {
+            echo "## 📊 Code Coverage Report"
+            echo ""
+            echo '```text'
+            cat coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload HTML coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: target/llvm-cov/html
+          retention-days: 14
+
+  msrv:
+    name: Rust 1.56 no_std
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha || github.sha }}
+
+      - uses: dtolnay/rust-toolchain@1.56.0
+
+      - name: Check minimum supported Rust version
+        run: cargo check --no-default-features
+
+  security:
+    name: Security Scans
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha || github.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: rust
+          build-mode: none
+          queries: security-extended
+
+      - name: Generate lockfiles
+        run: |
+          cargo generate-lockfile
+          cargo generate-lockfile --manifest-path tests/fixtures/downstream/Cargo.toml
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit@0.22.2
+
+      - name: Audit Rust dependencies
+        run: |
+          cargo audit --deny warnings --file Cargo.lock
+          cargo audit --deny warnings --file tests/fixtures/downstream/Cargo.lock
+
+      - name: Review dependency changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: low
+          fail-on-scopes: runtime, development, unknown
+
+      - name: Analyze Rust
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:rust
+
+  release_preview:
+    name: Release Preview
+    if: github.event_name == 'pull_request' || inputs.pr_number != ''
+    needs: [test, msrv, security, commit_lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || inputs.head_sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check version gate
+        id: gate
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_sha }}
+        run: python3 scripts/release_gate.py --before-sha "$BASE_SHA"
+
+      - uses: taiki-e/install-action@v2
+        if: steps.gate.outputs.release == 'true'
+        with:
+          tool: git-cliff@2.13.1
+
+      - name: Generate preview notes
+        if: steps.gate.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: git cliff --config cliff.toml --unreleased --tag "v$VERSION" --strip header --output release_notes.md
+
+      - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.release == 'true'
+        with:
+          name: release-notes-preview
+          path: release_notes.md
+
+  release_gate:
+    name: Check Release Version
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_sha != '')
+    needs: [test, msrv, security, commit_lint]
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.gate.outputs.release }}
+      publish: ${{ steps.gate.outputs.publish }}
+      version: ${{ steps.gate.outputs.version }}
+      prerelease: ${{ steps.gate.outputs.prerelease }}
+      sha: ${{ steps.gate.outputs.sha }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_sha || github.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check version gate
+        id: gate
+        env:
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          target_sha="${RELEASE_SHA:-$GITHUB_SHA}"
+          before_sha="$PUSH_BEFORE_SHA"
+          if [ -n "$RELEASE_SHA" ]; then
+            if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "release_sha must be a full commit sha" >&2
+              exit 1
+            fi
+            git fetch origin main
+            if ! git merge-base --is-ancestor "$target_sha" origin/main; then
+              echo "$target_sha is not reachable from main" >&2
+              exit 1
+            fi
+            before_sha="$(git rev-parse "$target_sha^")"
+          fi
+          python3 scripts/release_gate.py \
+            --before-sha "$before_sha" \
+            --recovery-sha "$target_sha"
+          echo "sha=$target_sha" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Publish Release
+    if: needs.release_gate.outputs.release == 'true'
+    needs: release_gate
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: crates-io-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.release_gate.outputs.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff@2.13.1
+
+      - name: Generate release notes
+        env:
+          VERSION: ${{ needs.release_gate.outputs.version }}
+        run: git cliff --config cliff.toml --unreleased --tag "v$VERSION" --strip header --output release_notes.md
+
+      - name: Stage tag and GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.release_gate.outputs.sha }}
+          VERSION: ${{ needs.release_gate.outputs.version }}
+        run: |
+          tag="v$VERSION"
+          if tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha 2>/dev/null)"; then
+            if [ "$tag_sha" != "$RELEASE_SHA" ]; then
+              echo "$tag points to $tag_sha instead of $RELEASE_SHA" >&2
+              exit 1
+            fi
+          else
+            gh api \
+              --method POST \
+              "repos/$GITHUB_REPOSITORY/git/refs" \
+              --field ref="refs/tags/$tag" \
+              --field sha="$RELEASE_SHA"
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            if [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" = "true" ]; then
+              gh release edit "$tag" \
+                --title "$tag" \
+                --notes-file release_notes.md \
+                --verify-tag
+            else
+              echo "$tag github release is already published"
+            fi
+          else
+            gh release create "$tag" \
+              --draft \
+              --title "$tag" \
+              --notes-file release_notes.md \
+              --verify-tag
+          fi
+
+      - name: Publish crate
+        if: needs.release_gate.outputs.publish == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "cargo registry token is missing" >&2
+            exit 1
+          fi
+          cargo publish
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release_gate.outputs.version }}
+          PRERELEASE: ${{ needs.release_gate.outputs.prerelease }}
+        run: |
+          if [ "$(gh release view "v$VERSION" --json isDraft --jq .isDraft)" = "false" ]; then
+            actual="$(gh release view "v$VERSION" --json isPrerelease --jq .isPrerelease)"
+            if [ "$actual" != "$PRERELEASE" ]; then
+              echo "v$VERSION prerelease state is $actual instead of $PRERELEASE" >&2
+              exit 1
+            fi
+            echo "v$VERSION github release is already published"
+            exit 0
+          fi
+
+          args=(--draft=false --title "v$VERSION" --notes-file release_notes.md --verify-tag)
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease --latest=false)
+          else
+            args+=(--prerelease=false --latest)
+          fi
+          gh release edit "v$VERSION" "${args[@]}"
+
+  release_smoke:
+    name: Release Secret Smoke Test
+    if: github.event_name == 'workflow_dispatch' && inputs.pr_number == ''
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check production secret access
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "cargo registry token is missing from production" >&2
+            exit 1
+          fi
+          echo "production cargo registry token is available"
+          cargo metadata --no-deps --format-version 1 | jq -r '.packages[0] | .name + " " + .version'

@@ -1,0 +1,18 @@
+[package]
+name = "rust-crate-template"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.56"
+authors = ["Adam Williams"]
+description = "template repository for publishing rust packages to crates.io with github actions ci"
+readme = "README.md"
+include = ["/src/**", "/tests/**", "/README.md", "/LICENSE-*"]
+repository = "https://github.com/awill1988/rust-crate-template"
+license = "MIT OR Apache-2.0"
+keywords = ["template", "crate", "ci"]
+categories = ["development-tools"]
+
+[features]
+default = []
+
+[dev-dependencies]
