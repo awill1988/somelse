@@ -1,11 +1,11 @@
 [package]
-name = "rust_crate_template_downstream"
+name = "somelse_downstream"
 version = "0.0.0"
 edition = "2021"
 publish = false
 
 [dependencies]
-rust-crate-template = { path = "../../..", default-features = false }
+somelse = { path = "../../..", default-features = false }
 
 [features]
 default = []

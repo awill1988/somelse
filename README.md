@@ -1,105 +1,169 @@
-# Rust Crate Template
+# somelse!
 
-A modern, production-grade GitHub template repository for publishing Rust libraries and crates to [crates.io](https://crates.io) with automated CI/CD.
+**Keep the `Some`. Diverge on `None`. Carry on.**
 
-[![CI](https://github.com/awill1988/rust-crate-template/actions/workflows/ci.yml/badge.svg)](https://github.com/awill1988/rust-crate-template/actions/workflows/ci.yml)
+`somelse!` is a dependency-free, `no_std` macro that extracts an `Option::Some`
+payload, applies optional inline transforms or sequential conditionals with
+caller-scope control flow, and dispatches `None` through diverging `else` clauses.
+
+[![Crates.io](https://img.shields.io/crates/v/somelse.svg)](https://crates.io/crates/somelse)
+[![Documentation](https://docs.rs/somelse/badge.svg)](https://docs.rs/somelse)
+[![CI](https://github.com/awill1988/somelse/actions/workflows/ci.yml/badge.svg)](https://github.com/awill1988/somelse/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 
-## Features
+```rust
+use somelse::somelse;
 
-- **Automated Publishing & Release Gate**:
-  - Crates.io publishing gated behind verified manifest version increments.
-  - Git tags and GitHub releases synchronized automatically on merge to `main`.
-  - **Unpublishable Baseline (`0.0.0`)**: Package version starts strictly at `0.0.0` and can never be published to crates.io. The first publishable release starts at `0.1.0` (or `0.1.0-alpha.1`).
-- **Native GitHub Coverage Reporting**:
-  - Complete elimination of external third-party coverage services and tokens.
-  - Coverage summaries rendered directly in GitHub Actions Step Summaries (`$GITHUB_STEP_SUMMARY`).
-  - Interactive HTML coverage reports uploaded as downloadable workflow artifacts.
-- **Commit Linting & Attribution Policy**:
-  - Zero-dependency commit linter enforcing Conventional Commits and lowercase subjects.
-  - Strict 72-character line wrapping.
-  - Zero AI attribution policy enforcement.
-- **Quality & Security**:
-  - `cargo test`, `cargo fmt`, `cargo clippy`, and `cargo publish --dry-run`.
-  - Minimum Supported Rust Version (MSRV) verification (`rust-version = "1.56"`).
-  - GitHub CodeQL static analysis and `cargo-audit` dependency vulnerability scanning.
-  - Workflow file validation with `actionlint`.
-- **Changelog Generation**:
-  - Structured release notes generated from conventional commits via `git-cliff`.
+fn process(input: Option<i32>) -> Result<i32, &'static str> {
+    let value = somelse!(input, else => return Err("missing value"));
+    Ok(value * 2)
+}
+```
 
----
+The expression runs once. A `Some` becomes the value of the macro. The `else`
+clause matches `None` and must leave the current path through `return`, `break`,
+`continue`, panic, or another never-returning expression.
 
-## Quickstart: Using this Template
+## The repeated pattern
 
-1. **Click "Use this template"** to create your new repository.
-2. **Configure your package metadata** in `Cargo.toml`:
-   - Change `name`, `description`, `repository`, and `authors`.
-   - Keep `version = "0.0.0"` until you are ready for your first release.
-3. **Configure GitHub Repository Secrets**:
-   - In your repository settings, create an environment named `production`.
-   - Add the secret `CARGO_REGISTRY_TOKEN` containing your crates.io API token.
-4. **Enable Local Git Hooks**:
-   ```sh
-   git config core.hooksPath .githooks
-   ```
+Rust's [`let-else`](https://rust-lang.github.io/rfcs/3137-let-else.html) keeps
+the inner value in the surrounding scope and requires the failure branch to
+diverge. However, `let-else` is a statement rather than an expression, cannot be
+used directly within nested sub-expressions or function arguments, and does not
+support inline conditional pipelines on the extracted value before assignment.
 
----
+A `match` allows binding, conditional checks, and divergence, but introduces
+repetitive structural ceremony:
 
-## Release Lifecycle
+```rust
+fn process(input: Option<i32>) -> Result<i32, &'static str> {
+    let value = match input {
+        Some(value) => value,
+        None => return Err("missing value"),
+    };
+    Ok(value * 2)
+}
+```
 
-### 1. The `0.0.0` Baseline
-The repository begins at `version = "0.0.0"`. This baseline indicates an unreleased repository state:
-- Pushes to `main` at `0.0.0` will run all tests and coverage checks, but the release gate will output `release=false, publish=false`.
-- No tag will be created and nothing will be published to crates.io.
-- Attempting to manually trigger a release of `0.0.0` is explicitly rejected.
+`somelse!` keeps that behavior at the call site with less repeated structure:
 
-### 2. Preparing a Release
-When you are ready to cut your first release:
-1. Go to **Actions** → **Prepare Release** workflow.
-2. Click **Run workflow** and enter the desired semver version (e.g. `0.1.0` or `0.1.0-alpha.1`).
-3. The workflow will:
-   - Validate that the version exceeds `0.0.0` and has not already been published.
-   - Create a dedicated branch `release/vX.Y.Z`.
-   - Update `Cargo.toml`.
-   - Open a release pull request with a preview of the release notes.
+```rust
+use somelse::somelse;
 
-### 3. Merging and Publishing
-1. Pull request CI runs full validation, builds release notes preview, and reports coverage.
-2. Merge the release pull request into `main`.
-3. The `CI` workflow detects the version bump, packages the crate, pushes the version tag, publishes to crates.io, and publishes the GitHub release.
+fn process(input: Option<i32>) -> Result<i32, &'static str> {
+    let value = somelse!(input, else => return Err("missing value"));
+    Ok(value * 2)
+}
+```
 
----
+## Closure feel with caller-scope control flow
 
-## Local Verification
+Standard closure combinators (`Option::map`, `Option::and_then`) isolate
+execution within closure boundaries: you cannot `return` from the caller
+function, nor `break` or `continue` from an enclosing loop.
 
-Run the exact checks performed in CI:
+`somelse!` gives you the feel of an inline transform or closure while expanding
+directly in caller scope:
+
+```rust
+use somelse::somelse;
+
+fn normalize(input: Option<i32>) -> Result<i32, &'static str> {
+    let value = somelse!(
+        input,
+        |mut v| {
+            if v > 100 {
+                v = 100;
+            }
+            if v < 0 {
+                return Err("negative values are disallowed");
+            }
+            v
+        },
+        else => return Err("value was missing"),
+    );
+    Ok(value)
+}
+```
+
+Control-flow expressions inside the block apply directly to the surrounding
+function or loop.
+
+## Declarative conditional series
+
+For sequential checks and in-place mutations of the `Some` payload:
+
+```rust
+use somelse::somelse;
+
+fn bounded(input: Option<i32>) -> Result<i32, &'static str> {
+    let value = somelse!(
+        input,
+        some mut v,
+        if v > 100 => v = 100,
+        if v < 0 => return Err("negative"),
+        else => return Err("missing"),
+    );
+    Ok(value)
+}
+```
+
+The conditions are evaluated in order. Each action can mutate `v` or diverge from
+the caller. The modified `v` is yielded directly.
+
+## Async expressions
+
+Async needs no separate feature. Await the input expression where it is produced:
+
+```rust
+use somelse::somelse;
+
+async fn load() -> Result<i32, &'static str> {
+    let value = somelse!(fetch_value().await, else => return Err("unavailable"));
+    Ok(value)
+}
+
+async fn fetch_value() -> Option<i32> {
+    Some(42)
+}
+```
+
+The macro does not await implicitly.
+
+## The name
+
+The name describes the domain: **`Some` + `else` = `somelse!`**.
+
+It stands alongside [`okerrr!`](https://github.com/awill1988/okerrr) as a
+lightweight, focused macro addressing boilerplate match ceremony in everyday
+Rust control flow.
+
+## Contributor checks
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a change.
+
+The conventional commit linter is written in Rust. Activate the tracked hooks:
 
 ```sh
-# Run unit and integration tests
+git config core.hooksPath .githooks
+```
+
+Run local validation:
+
+```sh
 cargo test
-
-# Run commit message linter tests
-cargo test --manifest-path tools/commit_check/Cargo.toml
-
-# Check code formatting
 cargo fmt --all -- --check
 cargo fmt --manifest-path tools/commit_check/Cargo.toml -- --check
-
-# Check clippy warnings
+cargo fmt --manifest-path tests/fixtures/downstream/Cargo.toml -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy --manifest-path tools/commit_check/Cargo.toml --all-targets -- -D warnings
-
-# Validate release gate automation
+cargo clippy --manifest-path tests/fixtures/downstream/Cargo.toml --all-targets -- -D warnings
 python3 -m unittest discover -s scripts -p 'test_*.py'
-
-# Dry-run cargo packaging
+cargo test --manifest-path tools/commit_check/Cargo.toml
+cargo check --manifest-path tests/fixtures/downstream/Cargo.toml
 cargo publish --dry-run
 ```
 
----
-
 ## License
 
-Dual-licensed under either of:
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE).
