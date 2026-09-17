@@ -1,0 +1,62 @@
+name: Adversarial Code Review
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'tools/**'
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: 'Base ref to compare against'
+        required: false
+        default: 'origin/main'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  adversarial_review:
+    name: Adversarial Code Review
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Restore Model & Runner Cache
+        id: cache-model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/adversarial-reviewer
+          key: adv-model-v1-${{ hashFiles('tools/adversarial_reviewer/model.env') }}
+
+      - name: Ensure Model & Runner
+        run: python3 tools/adversarial_reviewer/fetch_model.py
+
+      - name: Run Adversarial Code Review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          export LD_LIBRARY_PATH="$HOME/.cache/adversarial-reviewer/llama_runner/build/bin:$HOME/.cache/adversarial-reviewer:${LD_LIBRARY_PATH:-}"
+          BASE_REF="${{ github.event.pull_request.base.sha || inputs.base_ref || 'origin/main' }}"
+          PR_NUM="${{ github.event.pull_request.number || '' }}"
+          python3 tools/adversarial_reviewer/adversarial_review.py \
+            --base "$BASE_REF" \
+            --target "${PR_NUM:+PR #$PR_NUM}" \
+            ${PR_NUM:+--pr "$PR_NUM"} \
+            --summary-file "$GITHUB_STEP_SUMMARY" \
+            --fail-on request-changes

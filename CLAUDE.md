@@ -1,4 +1,4 @@
-# Instructions for `rust-crate-template`
+# Instructions for `somelse`
 
 ## Commit Standards
 
@@ -30,9 +30,12 @@ All commit messages MUST follow Conventional Commits (`feat:`, `fix:`, `refactor
 cargo test
 cargo fmt --all -- --check
 cargo fmt --manifest-path tools/commit_check/Cargo.toml -- --check
+cargo fmt --manifest-path tests/fixtures/downstream/Cargo.toml -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy --manifest-path tools/commit_check/Cargo.toml --all-targets -- -D warnings
+cargo clippy --manifest-path tests/fixtures/downstream/Cargo.toml --all-targets -- -D warnings
 python3 -m unittest discover -s scripts -p 'test_*.py'
 cargo test --manifest-path tools/commit_check/Cargo.toml
+cargo check --manifest-path tests/fixtures/downstream/Cargo.toml
 cargo publish --dry-run
 ```

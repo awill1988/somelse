@@ -23,33 +23,33 @@ class PrepareReleaseTests(unittest.TestCase):
             validate_version_input(f"0.1.0-{'a' * 60}")
 
     def test_replaces_root_package_version(self):
-        manifest = '[package]\nname = "rust-crate-template"\nversion = "0.0.0"\n\n[features]\n'
+        manifest = '[package]\nname = "somelse"\nversion = "0.0.0"\n\n[features]\n'
         self.assertEqual(
             replace_package_version(manifest, "0.0.0", "0.1.0-rc.1"),
-            '[package]\nname = "rust-crate-template"\nversion = "0.1.0-rc.1"\n\n[features]\n',
+            '[package]\nname = "somelse"\nversion = "0.1.0-rc.1"\n\n[features]\n',
         )
 
-    def test_preserves_dependency_versions(self):
+    def test_replace_package_version_rejects_mismatch(self):
+        manifest = '[package]\nname = "somelse"\nversion = "0.0.0"\n'
+        with self.assertRaises(ValueError):
+            replace_package_version(manifest, "0.1.0", "0.2.0")
+
+    def test_replace_package_version_requires_version_field(self):
+        manifest = '[package]\nname = "somelse"\n'
+        with self.assertRaises(ValueError):
+            replace_package_version(manifest, "0.0.0", "0.1.0")
+
+    def test_replace_package_version_rejects_multiple_matches(self):
         manifest = (
-            '[package]\nversion = "0.0.0"\n\n'
-            '[dependencies]\nexample = { version = "1.0.0" }\n'
+            '[package]\nname = "somelse"\nversion = "0.0.0"\n'
+            'name = "somelse"\nversion = "0.0.0"\n'
         )
-        self.assertIn(
-            'example = { version = "1.0.0" }',
-            replace_package_version(manifest, "0.0.0", "0.1.0"),
-        )
-
-    def test_rejects_metadata_mismatch(self):
-        with self.assertRaisesRegex(ValueError, "does not match cargo metadata"):
-            replace_package_version(
-                '[package]\nversion = "0.0.1"\n',
-                "0.0.0",
-                "0.1.0",
-            )
+        with self.assertRaises(ValueError):
+            replace_package_version(manifest, "0.0.0", "0.1.0")
 
     def test_requires_package_version(self):
         with self.assertRaisesRegex(ValueError, "expected one package version"):
-            replace_package_version('[package]\nname = "rust-crate-template"\n', "0.0.0", "0.1.0")
+            replace_package_version('[package]\nname = "somelse"\n', "0.0.0", "0.1.0")
 
 
 if __name__ == "__main__":

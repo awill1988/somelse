@@ -1,0 +1,68 @@
+name: 'Adversarial Code Reviewer'
+description: 'Runs an adversarial code review using local quantized open-weight models in an automated harness'
+inputs:
+  base_ref:
+    description: 'Base git reference to compare changes against'
+    required: false
+    default: 'origin/main'
+  head_ref:
+    description: 'Head git reference to compare'
+    required: false
+    default: 'HEAD'
+  target:
+    description: 'Named target description for reporting'
+    required: false
+    default: 'HEAD'
+  pr_number:
+    description: 'Pull request number if running on a PR'
+    required: false
+    default: ''
+  fail_on:
+    description: 'Disposition that triggers failure: request-changes, critical, none'
+    required: false
+    default: 'request-changes'
+  output_format:
+    description: 'Output format: markdown or json'
+    required: false
+    default: 'markdown'
+  summary_file:
+    description: 'Path to step summary file (e.g. $GITHUB_STEP_SUMMARY)'
+    required: false
+    default: ''
+
+outputs:
+  disposition:
+    description: 'Review disposition: APPROVE, COMMENT, or REQUEST_CHANGES'
+    value: ${{ steps.run-review.outputs.disposition }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Ensure Model & Runner
+      shell: bash
+      run: python3 tools/adversarial_reviewer/fetch_model.py
+
+    - name: Run Adversarial Review
+      id: run-review
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+      run: |
+        EXTRA_ARGS=""
+        if [ -n "${{ inputs.pr_number }}" ]; then
+          EXTRA_ARGS="$EXTRA_ARGS --pr ${{ inputs.pr_number }}"
+        fi
+        if [ -n "${{ inputs.summary_file }}" ]; then
+          EXTRA_ARGS="$EXTRA_ARGS --summary-file ${{ inputs.summary_file }}"
+        fi
+        if [ "${{ inputs.output_format }}" = "json" ]; then
+          EXTRA_ARGS="$EXTRA_ARGS --json"
+        fi
+
+        export LD_LIBRARY_PATH="$HOME/.cache/adversarial-reviewer/llama_runner/build/bin:$HOME/.cache/adversarial-reviewer:${LD_LIBRARY_PATH:-}"
+        python3 tools/adversarial_reviewer/adversarial_review.py \
+          --base "${{ inputs.base_ref }}" \
+          --head "${{ inputs.head_ref }}" \
+          --target "${{ inputs.target }}" \
+          --fail-on "${{ inputs.fail_on }}" \
+          $EXTRA_ARGS

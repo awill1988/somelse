@@ -1,9 +1,12 @@
 #![no_std]
 
-use rust_crate_template::greet;
+use somelse::somelse;
 
-pub fn downstream_greet() -> &'static str {
-    greet("downstream")
+pub struct Opaque;
+
+pub fn ordinary(input: Option<u8>) -> Result<u8, Opaque> {
+    let value = somelse!(input, else => return Err(Opaque));
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -11,7 +14,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_downstream_greet() {
-        assert_eq!(downstream_greet(), "hello, crate");
+    fn test_ordinary() {
+        assert!(matches!(ordinary(Some(42)), Ok(42)));
+        assert!(ordinary(None).is_err());
     }
 }
