@@ -257,6 +257,25 @@ def build_markdown_report(target: str, disposition: str, findings: list[dict], r
     return report
 
 
+def submit_pr_review(pr: int, disposition: str, report: str) -> None:
+    if disposition == "APPROVE":
+        review_flag = "--approve"
+    elif disposition == "REQUEST_CHANGES":
+        review_flag = "--request-changes"
+    else:
+        review_flag = "--comment"
+
+    cmd = ["gh", "pr", "review", str(pr), review_flag, "--body", report]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode == 0:
+        print(f"submitted formal PR review ({review_flag}) to PR #{pr}")
+    else:
+        print(f"formal PR review failed ({result.stderr.strip()}); falling back to PR comment...", file=sys.stderr)
+        cmd_comment = ["gh", "pr", "comment", str(pr), "--body", report]
+        subprocess.run(cmd_comment, check=True)
+        print(f"posted review comment to PR #{pr}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Headless adversarial code reviewer inspired by qwen review run.")
     parser.add_argument("--base", default="origin/main", help="Base ref to compare against")
@@ -321,11 +340,9 @@ def main():
 
     if args.pr and os.environ.get("GITHUB_TOKEN"):
         try:
-            cmd = ["gh", "pr", "comment", str(args.pr), "--body", markdown_report]
-            subprocess.run(cmd, check=True)
-            print(f"posted review report to PR #{args.pr}")
+            submit_pr_review(args.pr, disposition, markdown_report)
         except Exception as error:
-            print(f"could not post PR comment: {error}", file=sys.stderr)
+            print(f"could not submit PR review or comment: {error}", file=sys.stderr)
 
     # Exit code contract:
     # 0 = clean or comments

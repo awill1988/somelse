@@ -4,3 +4,9 @@ release_notes.md
 **/*.rs.bk
 Cargo.lock
 .DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+*.bak

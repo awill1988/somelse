@@ -1,12 +1,13 @@
-import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from adversarial_review import (
     build_markdown_report,
     parse_model_output,
     run_mock_reviewer,
     should_ignore_file,
+    submit_pr_review,
 )
 from fetch_model import load_env
 
@@ -79,6 +80,19 @@ class AdversarialReviewerTests(unittest.TestCase):
         self.assertIn("MODEL_SHA256", config)
         self.assertIn("PRIMARY_MODEL_URL", config)
         self.assertEqual(config["MODEL_NAME"], "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf")
+
+    @patch("adversarial_review.subprocess.run")
+    def test_submit_pr_review_flags(self, mock_run):
+        mock_run.return_value.returncode = 0
+
+        submit_pr_review(1, "APPROVE", "body")
+        mock_run.assert_called_with(["gh", "pr", "review", "1", "--approve", "--body", "body"], capture_output=True, text=True, check=False)
+
+        submit_pr_review(1, "REQUEST_CHANGES", "body")
+        mock_run.assert_called_with(["gh", "pr", "review", "1", "--request-changes", "--body", "body"], capture_output=True, text=True, check=False)
+
+        submit_pr_review(1, "COMMENT", "body")
+        mock_run.assert_called_with(["gh", "pr", "review", "1", "--comment", "--body", "body"], capture_output=True, text=True, check=False)
 
 
 if __name__ == "__main__":
