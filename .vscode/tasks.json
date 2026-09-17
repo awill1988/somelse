@@ -19,7 +19,7 @@
     {
       "label": "adversarial-review:debug",
       "type": "shell",
-      "command": "python3 tools/adversarial_reviewer/adversarial_review.py --base origin/main --mock",
+      "command": "python3 tools/adversarial_reviewer/adversarial_review.py --base origin/main --target 'local-debug' --mock --json",
       "group": {
         "kind": "build",
         "isDefault": false
@@ -34,7 +34,7 @@
     {
       "label": "adversarial-review:run",
       "type": "shell",
-      "command": "python3 tools/adversarial_reviewer/fetch_model.py && python3 tools/adversarial_reviewer/adversarial_review.py --base origin/main",
+      "command": "python3 tools/adversarial_reviewer/fetch_model.py && python3 tools/adversarial_reviewer/adversarial_review.py --base origin/main --target 'local-run' --fail-on request-changes",
       "group": {
         "kind": "build",
         "isDefault": false

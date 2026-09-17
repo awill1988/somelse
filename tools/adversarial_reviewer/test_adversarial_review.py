@@ -1,8 +1,10 @@
+import json
 import unittest
 from pathlib import Path
 
 from adversarial_review import (
-    format_review_report,
+    build_markdown_report,
+    parse_model_output,
     run_mock_reviewer,
     should_ignore_file,
 )
@@ -27,34 +29,49 @@ class AdversarialReviewerTests(unittest.TestCase):
 
     def test_mock_reviewer_passes_clean_diff(self):
         diff = "+ let value = somelse!(opt, else => return Err(\"missing\"));"
-        report = run_mock_reviewer(diff, ["src/lib.rs"])
-        self.assertIn("VERDICT: PASS", report)
-        self.assertIn("No Soundness Violations", report)
+        disp, findings, summary = run_mock_reviewer(diff, ["src/lib.rs"])
+        self.assertEqual(disp, "APPROVE")
+        self.assertEqual(len(findings), 0)
+        self.assertIn("No soundness violations", summary)
 
     def test_mock_reviewer_flags_std_leak(self):
         diff = "+ use std::collections::HashMap;"
-        report = run_mock_reviewer(diff, ["src/lib.rs"])
-        self.assertIn("VERDICT: CRITICAL", report)
-        self.assertIn("std` leakage", report)
+        disp, findings, summary = run_mock_reviewer(diff, ["src/lib.rs"])
+        self.assertEqual(disp, "REQUEST_CHANGES")
+        self.assertTrue(any(f["category"] == "no_std" for f in findings))
+        self.assertIn("std leakage", findings[0]["title"])
 
     def test_mock_reviewer_flags_ai_attribution(self):
         diff = "+ Co-authored-by: robot <robot@example.com>"
-        report = run_mock_reviewer(diff, ["src/lib.rs"])
-        self.assertIn("VERDICT: CRITICAL", report)
-        self.assertIn("AI attribution", report)
+        disp, findings, summary = run_mock_reviewer(diff, ["src/lib.rs"])
+        self.assertEqual(disp, "REQUEST_CHANGES")
+        self.assertTrue(any(f["category"] == "attribution" for f in findings))
 
-    def test_format_review_report_parses_verdicts(self):
-        report_pass, verdict_pass = format_review_report("analysis details\nVERDICT: PASS", ["src/lib.rs"])
-        self.assertEqual(verdict_pass, "PASS")
-        self.assertIn("`PASS`", report_pass)
+    def test_parse_model_output_dispositions(self):
+        disp, findings, _ = parse_model_output("Review complete.\nDISPOSITION: APPROVE")
+        self.assertEqual(disp, "APPROVE")
 
-        report_crit, verdict_crit = format_review_report("analysis details\nVERDICT: CRITICAL", ["src/lib.rs"])
-        self.assertEqual(verdict_crit, "CRITICAL")
-        self.assertIn("`CRITICAL`", report_crit)
+        disp, findings, _ = parse_model_output("Found critical bug.\nDISPOSITION: REQUEST_CHANGES")
+        self.assertEqual(disp, "REQUEST_CHANGES")
 
-        report_flag, verdict_flag = format_review_report("analysis details\nVERDICT: FLAGGED", ["src/lib.rs"])
-        self.assertEqual(verdict_flag, "FLAGGED")
-        self.assertIn("`FLAGGED`", report_flag)
+        disp, findings, _ = parse_model_output("Minor note on style.\nDISPOSITION: COMMENT")
+        self.assertEqual(disp, "COMMENT")
+
+    def test_build_markdown_report_formatting(self):
+        findings = [{
+            "severity": "critical",
+            "category": "soundness",
+            "file": "src/lib.rs",
+            "line": 10,
+            "title": "Unsafe macro expansion",
+            "details": "Expression evaluated multiple times",
+            "counterexample": "somelse!(expr, ...)",
+        }]
+        report = build_markdown_report("PR #1", "REQUEST_CHANGES", findings, "raw output", ["src/lib.rs"])
+        self.assertIn("## 🔴 Adversarial Code Review: PR #1", report)
+        self.assertIn("`REQUEST_CHANGES`", report)
+        self.assertIn("[SOUNDNESS]", report)
+        self.assertIn("somelse!(expr, ...)", report)
 
     def test_load_model_env_parses_attributes(self):
         config = load_env(SCRIPT_DIR / "model.env")

@@ -88,38 +88,56 @@ def ensure_model(cache_dir: Path, config: dict) -> Path:
 
 def ensure_runner(cache_dir: Path, config: dict) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
-    runner_path = cache_dir / "llama-cli"
+    runner_dir = cache_dir / "llama_runner"
 
-    if runner_path.exists() and os.access(runner_path, os.X_OK):
-        print("llama-cli runner already present and executable.")
-        return runner_path
+    # Check for already extracted binary
+    found_binaries = list(runner_dir.glob("**/llama-cli")) + list(runner_dir.glob("**/llama-cli.exe"))
+    if found_binaries and os.access(found_binaries[0], os.X_OK):
+        print(f"llama-cli runner already present and executable at {found_binaries[0]}")
+        return found_binaries[0]
 
     runner_url = config.get("LLAMA_RUNNER_URL")
     if not runner_url:
         print("no LLAMA_RUNNER_URL specified, skipping runner download.")
-        return runner_path
+        return runner_dir / "llama-cli"
 
     zip_path = cache_dir / "llama-runner.zip"
     if not download_file([runner_url], zip_path):
         raise RuntimeError(f"failed to download runner from {runner_url}")
 
-    print("extracting llama-cli from archive...")
+    print("extracting full runner package from archive...")
+    runner_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, "r") as archive:
-        for member in archive.namelist():
-            if member.endswith("llama-cli") or member.endswith("llama-cli.exe"):
-                with archive.open(member) as source, open(runner_path, "wb") as target:
-                    shutil.copyfileobj(source, target)
-                break
+        archive.extractall(runner_dir)
 
     if zip_path.exists():
         zip_path.unlink()
 
-    if runner_path.exists():
-        runner_path.chmod(0o755)
-        print(f"llama-cli installed to {runner_path}")
-        return runner_path
+    found_binaries = list(runner_dir.glob("**/llama-cli")) + list(runner_dir.glob("**/llama-cli.exe"))
+    if not found_binaries:
+        raise RuntimeError("could not find llama-cli binary in downloaded runner archive.")
 
-    raise RuntimeError("could not find llama-cli binary in downloaded runner archive.")
+    actual_bin = found_binaries[0]
+    actual_bin.chmod(0o755)
+
+    # Ensure shared libraries in that directory are readable/executable
+    for lib in actual_bin.parent.glob("*.so*"):
+        try:
+            lib.chmod(0o755)
+        except Exception:
+            pass
+
+    # Create top-level symlink for backwards compatibility
+    top_link = cache_dir / "llama-cli"
+    try:
+        if top_link.is_symlink() or top_link.exists():
+            top_link.unlink()
+        top_link.symlink_to(actual_bin)
+    except Exception:
+        pass
+
+    print(f"llama-cli installed to {actual_bin}")
+    return actual_bin
 
 
 def main():
