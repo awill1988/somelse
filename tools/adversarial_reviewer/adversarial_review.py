@@ -163,19 +163,34 @@ def run_llama_inference(runner_path: Path, model_path: Path, prompt: str) -> str
     env["LD_LIBRARY_PATH"] = f"{joined_dirs}:{existing_ld}".rstrip(":")
     env["DYLD_LIBRARY_PATH"] = f"{joined_dirs}:{existing_dyld}".rstrip(":")
 
+    threads = str(min(os.cpu_count() or 2, 4))
     cmd = [
-        str(runner_path),
+        str(runner_resolved),
         "-m", str(model_path),
         "-p", prompt,
-        "-n", "768",
-        "-c", "4096",
+        "-n", "512",
+        "-c", "2048",
         "--temp", "0.2",
         "--top-p", "0.9",
-        "-t", "4",
+        "-t", threads,
         "--no-display-prompt",
+        "--no-conversation",
+        "--simple-io",
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            timeout=180,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("llama-cli execution timed out after 180 seconds") from exc
+
     if result.returncode != 0:
         raise RuntimeError(f"llama-cli execution failed: {result.stderr}")
 
