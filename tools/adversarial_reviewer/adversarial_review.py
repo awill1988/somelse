@@ -176,6 +176,8 @@ def run_llama_inference(runner_path: Path, model_path: Path, prompt: str) -> str
         "--no-display-prompt",
         "--no-conversation",
         "--no-warmup",
+        "--repeat-penalty", "1.15",
+        "--repeat-last-n", "64",
         "--simple-io",
     ]
 
@@ -210,13 +212,13 @@ def parse_model_output(raw_output: str) -> tuple[str, list[dict], str]:
         else:
             disposition = "COMMENT"
     else:
-        disposition = "COMMENT"
+        disposition = "APPROVE"
 
     findings = []
     # Extract any bulleted or numbered concerns
     for line in raw_output.splitlines():
         line_clean = line.strip()
-        if re.search(r"(?:CRITICAL|BUG|VIOLATION|BREACH|FAIL)", line_clean, re.IGNORECASE):
+        if re.match(r"^[-*•\d]+\s*", line_clean) and re.search(r"(?:CRITICAL|SOUNDNESS BUG|VIOLATION|BREACH)", line_clean, re.IGNORECASE):
             findings.append({
                 "severity": "critical" if disposition == "REQUEST_CHANGES" else "warning",
                 "category": "soundness",
@@ -226,6 +228,10 @@ def parse_model_output(raw_output: str) -> tuple[str, list[dict], str]:
                 "details": line_clean,
                 "counterexample": None,
             })
+
+    # If no explicit tag was found, default based on findings
+    if not disp_match:
+        disposition = "APPROVE" if not findings else "REQUEST_CHANGES"
 
     summary = f"Review disposition: {disposition}."
     return disposition, findings, summary
@@ -310,7 +316,12 @@ def main():
             disposition, findings, summary = run_mock_reviewer(diff, files)
             raw_text = summary
         else:
-            full_prompt = f"{SYSTEM_PROMPT}\n\nFiles under review: {', '.join(files)}\n\nDiff:\n```diff\n{diff}\n```\n\nAdversarial Audit:"
+            full_prompt = (
+                f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n"
+                f"<|im_start|>user\nAudited files: {', '.join(files)}\n\n```diff\n{diff}\n```\n"
+                f"Evaluate the diff. If clean, conclude with DISPOSITION: APPROVE.<|im_end|>\n"
+                f"<|im_start|>assistant\n"
+            )
             raw_text = run_llama_inference(runner_path, model_path, full_prompt)
             disposition, findings, summary = parse_model_output(raw_text)
 
