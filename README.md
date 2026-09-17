@@ -1,10 +1,9 @@
 # somelse!
 
-**Keep the `Some`. Diverge on `None`. Carry on.**
+**Keep the `Some`. Diverge on `None`.**
 
 `somelse!` is a dependency-free, `no_std` macro that extracts an `Option::Some`
-payload, applies optional inline transforms or sequential conditionals with
-caller-scope control flow, and dispatches `None` through diverging `else` clauses.
+payload as an expression and requires `None` to diverge from the current path.
 
 [![Crates.io](https://img.shields.io/crates/v/somelse.svg)](https://crates.io/crates/somelse)
 [![Documentation](https://docs.rs/somelse/badge.svg)](https://docs.rs/somelse)
@@ -20,20 +19,18 @@ fn process(input: Option<i32>) -> Result<i32, &'static str> {
 }
 ```
 
-The expression runs once. A `Some` becomes the value of the macro. The `else`
-clause matches `None` and must leave the current path through `return`, `break`,
-`continue`, panic, or another never-returning expression.
+The input runs once. A `Some` becomes the value of the macro. The `else`
+expression matches `None` and must leave the current path through `return`,
+`break`, `continue`, panic, or another never-returning expression.
 
-## The repeated pattern
+## Why an expression
 
 Rust's [`let-else`](https://rust-lang.github.io/rfcs/3137-let-else.html) keeps
 the inner value in the surrounding scope and requires the failure branch to
-diverge. However, `let-else` is a statement rather than an expression, cannot be
-used directly within nested sub-expressions or function arguments, and does not
-support inline conditional pipelines on the extracted value before assignment.
+diverge. It is a statement, so it cannot be placed directly inside another
+expression or function argument.
 
-A `match` allows binding, conditional checks, and divergence, but introduces
-repetitive structural ceremony:
+A `match` works in those positions but repeats the `Some` and `None` structure:
 
 ```rust
 fn process(input: Option<i32>) -> Result<i32, &'static str> {
@@ -45,98 +42,23 @@ fn process(input: Option<i32>) -> Result<i32, &'static str> {
 }
 ```
 
-`somelse!` keeps that behavior at the call site with less repeated structure:
+`somelse!` keeps the same control flow in expression position:
 
 ```rust
 use somelse::somelse;
 
 fn process(input: Option<i32>) -> Result<i32, &'static str> {
-    let value = somelse!(input, else => return Err("missing value"));
-    Ok(value * 2)
+    Ok(somelse!(input, else => return Err("missing value")) * 2)
 }
 ```
 
-## Closure feel with caller-scope control flow
-
-Standard closure combinators (`Option::map`, `Option::and_then`) isolate
-execution within closure boundaries: you cannot `return` from the caller
-function, nor `break` or `continue` from an enclosing loop.
-
-`somelse!` gives you the feel of an inline transform or closure while expanding
-directly in caller scope:
-
-```rust
-use somelse::somelse;
-
-fn normalize(input: Option<i32>) -> Result<i32, &'static str> {
-    let value = somelse!(
-        input,
-        |mut v| {
-            if v > 100 {
-                v = 100;
-            }
-            if v < 0 {
-                return Err("negative values are disallowed");
-            }
-            v
-        },
-        else => return Err("value was missing"),
-    );
-    Ok(value)
-}
-```
-
-Control-flow expressions inside the block apply directly to the surrounding
-function or loop.
-
-## Declarative conditional series
-
-For sequential checks and in-place mutations of the `Some` payload:
-
-```rust
-use somelse::somelse;
-
-fn bounded(input: Option<i32>) -> Result<i32, &'static str> {
-    let value = somelse!(
-        input,
-        some mut v,
-        if v > 100 => v = 100,
-        if v < 0 => return Err("negative"),
-        else => return Err("missing"),
-    );
-    Ok(value)
-}
-```
-
-The conditions are evaluated in order. Each action can mutate `v` or diverge from
-the caller. The modified `v` is yielded directly.
-
-## Async expressions
-
-Async needs no separate feature. Await the input expression where it is produced:
-
-```rust
-use somelse::somelse;
-
-async fn load() -> Result<i32, &'static str> {
-    let value = somelse!(fetch_value().await, else => return Err("unavailable"));
-    Ok(value)
-}
-
-async fn fetch_value() -> Option<i32> {
-    Some(42)
-}
-```
-
-The macro does not await implicitly.
+Prefer `let-else` when a statement is sufficient and `match` when multiple
+branches need meaningful behavior. This macro exists only for concise extraction
+where expression placement and caller-selected divergence are both useful.
 
 ## The name
 
-The name describes the domain: **`Some` + `else` = `somelse!`**.
-
-It stands alongside [`okerrr!`](https://github.com/awill1988/okerrr) as a
-lightweight, focused macro addressing boilerplate match ceremony in everyday
-Rust control flow.
+The name describes the complete domain: **`Some` + `else` = `somelse!`**.
 
 ## Contributor checks
 

@@ -1,4 +1,4 @@
-use somelse::{some_else, somelse};
+use somelse::somelse;
 use std::cell::Cell;
 use std::future::Future;
 use std::sync::Arc;
@@ -25,19 +25,6 @@ fn poll_ready<F: Future>(future: F) -> F::Output {
 fn extracts_some_payload() {
     fn double(input: Option<i32>) -> Result<i32, &'static str> {
         let value = somelse!(input, else => return Err("missing"));
-        Ok(value * 2)
-    }
-
-    assert_eq!(double(Some(21)), Ok(42));
-    assert_eq!(double(None), Err("missing"));
-}
-
-#[test]
-fn extracts_some_payload_with_block_syntax() {
-    fn double(input: Option<i32>) -> Result<i32, &'static str> {
-        let value = somelse!(input, else {
-            return Err("missing");
-        });
         Ok(value * 2)
     }
 
@@ -137,125 +124,15 @@ fn borrows_mutable_payload() {
 }
 
 #[test]
-fn closure_transforms_payload() {
-    fn transform(input: Option<i32>) -> Result<i32, &'static str> {
-        let value = somelse!(input, |v| v * 3, else => return Err("empty"));
-        Ok(value)
+fn composes_inside_an_expression() {
+    fn multiply(value: i32, factor: i32) -> i32 {
+        value * factor
     }
 
-    assert_eq!(transform(Some(10)), Ok(30));
-    assert_eq!(transform(None), Err("empty"));
-}
-
-#[test]
-fn closure_modifies_with_conditionals() {
-    fn sanitize(input: Option<i32>) -> Result<i32, &'static str> {
-        let value = somelse!(
-            input,
-            |mut v| {
-                if v > 100 {
-                    v = 100;
-                }
-                if v < 0 {
-                    return Err("negative forbidden");
-                }
-                v
-            },
-            else => return Err("missing")
-        );
-        Ok(value)
-    }
-
-    assert_eq!(sanitize(Some(150)), Ok(100));
-    assert_eq!(sanitize(Some(42)), Ok(42));
-    assert_eq!(sanitize(Some(-5)), Err("negative forbidden"));
-    assert_eq!(sanitize(None), Err("missing"));
-}
-
-#[test]
-fn closure_diverges_from_caller_loop() {
-    let items = [Some(10), Some(0), Some(20), None];
-    let mut sum = 0;
-
-    for item in items {
-        let val = somelse!(
-            item,
-            |v| {
-                if v == 0 {
-                    continue;
-                }
-                v
-            },
-            else => break
-        );
-        sum += val;
-    }
-
-    assert_eq!(sum, 30);
-}
-
-#[test]
-fn declarative_conditional_series_modifies_in_place() {
-    fn normalize(input: Option<i32>) -> Result<i32, &'static str> {
-        let value = somelse!(
-            input,
-            some mut val,
-            if val > 100 => val = 100,
-            if val < 50 => val += 10,
-            if val == 0 => return Err("zero rejected"),
-            else => return Err("missing")
-        );
-        Ok(value)
-    }
-
-    assert_eq!(normalize(Some(150)), Ok(100));
-    assert_eq!(normalize(Some(30)), Ok(40));
-    assert_eq!(normalize(Some(60)), Ok(60));
-    assert_eq!(normalize(None), Err("missing"));
-}
-
-#[test]
-fn declarative_conditional_series_with_early_exit() {
-    fn validate(input: Option<i32>) -> Result<i32, &'static str> {
-        let value = somelse!(
-            input,
-            some mut val,
-            if val < 0 => return Err("negative"),
-            if val == 10 => val *= 2,
-            else => return Err("missing")
-        );
-        Ok(value)
-    }
-
-    assert_eq!(validate(Some(10)), Ok(20));
-    assert_eq!(validate(Some(-1)), Err("negative"));
-    assert_eq!(validate(None), Err("missing"));
-}
-
-#[test]
-fn declarative_conditional_series_immutable_binding() {
-    fn check_positive(input: Option<i32>) -> Result<i32, &'static str> {
-        let value = somelse!(
-            input,
-            some val,
-            if val < 0 => return Err("negative"),
-            else => return Err("missing")
-        );
-        Ok(value)
-    }
-
-    assert_eq!(check_positive(Some(42)), Ok(42));
-    assert_eq!(check_positive(Some(-1)), Err("negative"));
-    assert_eq!(check_positive(None), Err("missing"));
-}
-
-#[test]
-fn some_else_alias_works() {
     fn double(input: Option<i32>) -> Result<i32, &'static str> {
-        let value = some_else!(input, else => return Err("missing"));
-        Ok(value * 2)
+        Ok(multiply(somelse!(input, else => return Err("missing")), 2))
     }
 
-    assert_eq!(double(Some(10)), Ok(20));
+    assert_eq!(double(Some(21)), Ok(42));
     assert_eq!(double(None), Err("missing"));
 }
