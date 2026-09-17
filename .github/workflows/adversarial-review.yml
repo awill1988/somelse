@@ -50,6 +50,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          export LD_LIBRARY_PATH="$HOME/.cache/adversarial-reviewer/llama_runner/build/bin:$HOME/.cache/adversarial-reviewer:${LD_LIBRARY_PATH:-}"
           BASE_REF="${{ github.event.pull_request.base.sha || inputs.base_ref || 'origin/main' }}"
           PR_NUM="${{ github.event.pull_request.number || '' }}"
           python3 tools/adversarial_reviewer/adversarial_review.py \

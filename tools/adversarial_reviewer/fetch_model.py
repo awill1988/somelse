@@ -117,13 +117,17 @@ def ensure_runner(cache_dir: Path, config: dict) -> Path:
     if not found_binaries:
         raise RuntimeError("could not find llama-cli binary in downloaded runner archive.")
 
-    actual_bin = found_binaries[0]
+    actual_bin = found_binaries[0].resolve()
     actual_bin.chmod(0o755)
 
-    # Ensure shared libraries in that directory are readable/executable
+    # Ensure shared libraries in that directory are readable/executable and symlink them to cache_dir
     for lib in actual_bin.parent.glob("*.so*"):
         try:
             lib.chmod(0o755)
+            dest_lib = cache_dir / lib.name
+            if dest_lib.is_symlink() or dest_lib.exists():
+                dest_lib.unlink()
+            dest_lib.symlink_to(lib.resolve())
         except Exception:
             pass
 

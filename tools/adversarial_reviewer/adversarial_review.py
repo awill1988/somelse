@@ -123,40 +123,45 @@ def run_mock_reviewer(diff: str, files: list[str]) -> tuple[str, list[dict], str
 
 def resolve_runner(cache_dir: Path) -> Path | None:
     candidates = [
-        cache_dir / "llama-cli",
-        cache_dir / "llama_runner" / "llama-cli",
         cache_dir / "llama_runner" / "build" / "bin" / "llama-cli",
+        cache_dir / "llama_runner" / "llama-cli",
+        cache_dir / "llama-cli",
     ]
     for candidate in candidates:
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return candidate
+        if candidate.exists() and os.access(candidate.resolve(), os.X_OK):
+            return candidate.resolve()
 
     found = list(cache_dir.glob("**/llama-cli"))
     for candidate in found:
-        if os.access(candidate, os.X_OK):
-            return candidate
+        if os.access(candidate.resolve(), os.X_OK):
+            return candidate.resolve()
 
     system_cli = shutil.which("llama-cli")
     if system_cli:
-        return Path(system_cli)
+        return Path(system_cli).resolve()
 
     return None
 
 
 def run_llama_inference(runner_path: Path, model_path: Path, prompt: str) -> str:
-    if not runner_path.exists():
-        raise FileNotFoundError(f"llama-cli runner not found at {runner_path}")
+    runner_resolved = runner_path.resolve()
+    if not runner_resolved.exists():
+        raise FileNotFoundError(f"llama-cli runner not found at {runner_resolved}")
     if not model_path.exists():
         raise FileNotFoundError(f"model weights not found at {model_path}")
 
-    # Set up LD_LIBRARY_PATH and DYLD_LIBRARY_PATH to include runner directory
-    runner_dir = runner_path.parent
+    # Set up LD_LIBRARY_PATH and DYLD_LIBRARY_PATH to include runner directories
+    lib_dirs = {str(runner_resolved.parent), str(runner_path.parent)}
+    for p in runner_resolved.parent.glob("*.so*"):
+        lib_dirs.add(str(p.parent))
+
     env = os.environ.copy()
     existing_ld = env.get("LD_LIBRARY_PATH", "")
     existing_dyld = env.get("DYLD_LIBRARY_PATH", "")
 
-    env["LD_LIBRARY_PATH"] = f"{runner_dir}:{existing_ld}".rstrip(":")
-    env["DYLD_LIBRARY_PATH"] = f"{runner_dir}:{existing_dyld}".rstrip(":")
+    joined_dirs = ":".join(sorted(lib_dirs))
+    env["LD_LIBRARY_PATH"] = f"{joined_dirs}:{existing_ld}".rstrip(":")
+    env["DYLD_LIBRARY_PATH"] = f"{joined_dirs}:{existing_dyld}".rstrip(":")
 
     cmd = [
         str(runner_path),

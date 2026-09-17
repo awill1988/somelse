@@ -59,6 +59,7 @@ runs:
           EXTRA_ARGS="$EXTRA_ARGS --json"
         fi
 
+        export LD_LIBRARY_PATH="$HOME/.cache/adversarial-reviewer/llama_runner/build/bin:$HOME/.cache/adversarial-reviewer:${LD_LIBRARY_PATH:-}"
         python3 tools/adversarial_reviewer/adversarial_review.py \
           --base "${{ inputs.base_ref }}" \
           --head "${{ inputs.head_ref }}" \
