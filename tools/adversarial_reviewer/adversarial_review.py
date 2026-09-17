@@ -30,7 +30,7 @@ IGNORE_PATTERNS = [
     r"^tools/",
 ]
 
-MAX_DIFF_LINES = 300
+MAX_DIFF_LINES = 200
 
 SYSTEM_PROMPT = """You are an adversarial code review auditor for a high-integrity, #![no_std] Rust crate.
 Your objective is to find bugs, soundness violations, invariant breaches, and subtle edge cases in the PR diff.
@@ -169,12 +169,13 @@ def run_llama_inference(runner_path: Path, model_path: Path, prompt: str) -> str
         "-m", str(model_path),
         "-p", prompt,
         "-n", "512",
-        "-c", "2048",
+        "-c", "8192",
         "--temp", "0.2",
         "--top-p", "0.9",
         "-t", threads,
         "--no-display-prompt",
         "--no-conversation",
+        "--no-warmup",
         "--simple-io",
     ]
 
